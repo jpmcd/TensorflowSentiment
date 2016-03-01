@@ -20,8 +20,6 @@ import tensorflow.python.ops.rnn_cell as rnn_cell
 
 import imdb
 
-datasets = {'imdb': (imdb.load_data, imdb.prepare_data)}
-
 # Set the random number generators' seeds for consistency
 SEED = 123
 numpy.random.seed(SEED)
@@ -35,10 +33,19 @@ class SentimentModel(object):
         vocab_size = config.vocab_size
 
         self._input_data = tf.placeholder(tf.int32, [batch_size, num_steps])
-        self._targets = tf.placeholder(tf.int32, [batch_size, num_steps])
+        self._mask = tf.placeholder(tf.float32, [batch_size, num_steps])
+        labels = tf.placeholder(tf.in32, [batch_size])
+        mask = tf.transpose(self._mask)
+        #mask = tf.expand_dims(tf.transpose(self._mask), -1)
+        #mask_expand = tf.tile(mask, tf.pack([1, 1, size]))
+        #self._targets = tf.placeholder(tf.int32, [batch_size, num_steps])
 
-        lstm_cell = tf.nn.rnn_cell.BasicLSTMCell(size, forget_bias=0.0)
-        cell = tf.nn.rnn_cell.MultiRNNCell([lstm_cell] * config.num_layers)
+        cell = tf.nn.rnn_cell.BasicLSTMCell(size, forget_bias=0.0)
+        self._initial_state = cell.zero_state(batch_size, tf.float32)
+
+        with tf.device("/cpu:0"):
+            embedding = tf.get_variable("embedding", [vocab_size, size])
+            inputs = tf.nn.embedding_lookup(embedding, self._input_data)
 
         outputs = []
         state = self._initial_state
@@ -48,13 +55,21 @@ class SentimentModel(object):
                     tf.get_variable_scope().reuse_variables()
                 (cell_output, state) = cell(inputs[:, time_step, :], state)
                 outputs.append(cell_output)
+        
+        #################################
+        
+        #cell_output = tf.convert_to_tensor(cell_output)*mask_expand
+        outputs = tf.convert_to_tensor(outputs)*mask
+        mask_sum = tf.reduce_sum(mask, 0)
+        proj = tf.reduce_sum(outputs, 0)/mask_sum #NOTE:did not tile mask_sum
+        #proj.shape = [batch_size, size]
+        #################################
 
-        output = tf.reshape(tf.concat(1, outputs), [-1, size])
         softmax_w = tf.get_variable("softmax_w", [size, vocab_size])
         softmax_b = tf.get_variable("softmax_b", [vocab_size])
-        logits = tf.matmul(output, softmax_w) + softmax_b
-        loss = tf.nn.seq2seq.sequence_loss_by_example([logits],
-            [tf.reshape(self._targets, [-1])],[tf.ones([batch_size * num_steps])])
+        logits = tf.matmul(proj, softmax_w) + softmax_b
+        pred = tf.nn.softmax(logits)
+        loss = tf.nn.sparse_softmax_cross_entropy_with_logits(logits, labels) 
         self._cost = cost = tf.reduce_sum(loss) / batch_size
         self._final_state = state
 
@@ -84,6 +99,7 @@ class Config(object):
     maxlen=100  # Sequence longer then this get ignored
     batch_size=16  # The batch size during training.
     valid_batch_size=64  # The batch size used for validation/test set.
+    num_layers=1
     dataset='imdb'  # Parameter for extra option
     noise_std=0.
     use_dropout=True  # if False slightly faster, but worst test error
@@ -93,9 +109,6 @@ class Config(object):
 
 def get_config():
     return Config()
-
-def get_dataset(name):
-    return datasets[name][0], datasets[name][1]
 
 def init_params(options):
     """
@@ -172,39 +185,15 @@ def build_model(tparams, options):
     
 
 
-def train_lstm(
-    dim_proj=128,  # word embeding dimension and LSTM number of hidden units.
-    patience=10,  # Number of epoch to wait before early stop if no progress
-    max_epochs=5000,  # The maximum number of epoch to run
-    dispFreq=10,  # Display to stdout the training progress every N updates
-    decay_c=0.,  # Weight decay for the classifier applied to the U weights.
-    lrate=0.0001,  # Learning rate for sgd (not used for adadelta and rmsprop)
-    n_words=10000,  # Vocabulary size
-    optimizer=adadelta,  # sgd, adadelta and rmsprop available, sgd very hard to use, not recommanded (probably need momentum and decaying learning rate).
-    encoder='lstm',  # TODO: can be removed must be lstm.
-    saveto='lstm_model.npz',  # The best model will be saved there
-    validFreq=370,  # Compute the validation error after this number of update.
-    saveFreq=1110,  # Save the parameters after every saveFreq updates
-    maxlen=100,  # Sequence longer then this get ignored
-    batch_size=16,  # The batch size during training.
-    valid_batch_size=64,  # The batch size used for validation/test set.
-    dataset='imdb',
-
-    # Parameter for extra option
-    noise_std=0.,
-    use_dropout=True,  # if False slightly faster, but worst test error
-                       # This frequently need a bigger model.
-    reload_model=None,  # Path to a saved model we want to start from.
-    test_size=-1,  # If >0, we keep only this number of test example.
-):
+def main():
 
     tf.Graph().as_default()
 
     # Model options
-    model_options = locals().copy()
     print("model options", model_options)
 
-    load_data, prepare_data = get_dataset(dataset)
+    load_data = imdb.load_data
+    prepare_data = imdb.prepare_data
 
     print('Loading data')
     train, valid, test = load_data(n_words=n_words, valid_portion=0.05,
@@ -217,10 +206,6 @@ def train_lstm(
         numpy.random.shuffle(idx)
         idx = idx[:test_size]
         test = ([test[0][n] for n in idx], [test[1][n] for n in idx])
-
-    ydim = numpy.max(train[1]) + 1
-
-    model_options['ydim'] = ydim
 
     print('Building model')
     # This create the initial parameters as numpy ndarrays.
@@ -241,10 +226,6 @@ def train_lstm(
     session.close()
 
 if __name__ == '__main__':
-    # See function train for all possible parameter and there definition.
-    train_lstm(
-        max_epochs=100,
-        test_size=500,
-    )
+    tf.app.run()
 
 
