@@ -1,5 +1,8 @@
 '''
-TensorFlow implementation of Theano LSTM sentiment analyzer tutorial
+A TensorFlow implementation of Theano LSTM sentiment analyzer tutorial,
+this model is a variation on the structure of TensorFlow's ptb_word_lm.py
+language model tutorial to accomplish the sentiment analysis task from
+the IMDB dataset.
 '''
 
 from __future__ import print_function
@@ -11,18 +14,8 @@ import time
 
 import numpy
 import tensorflow as tf
-import tensorflow.python.ops.rnn_cell as rnn_cell
-
-#import theano
-#from theano import config
-#import theano.tensor as tensor
-#from theano.sandbox.rng_mrg import MRG_RandomStreams as RandomStreams
-
 import imdb
 
-# Set the random number generators' seeds for consistency
-SEED = 123
-numpy.random.seed(SEED)
 
 class SentimentModel(object):
 
@@ -32,62 +25,65 @@ class SentimentModel(object):
         size = config.hidden_size
         vocab_size = config.vocab_size
 
-        self._input_data = tf.placeholder(tf.int32, [batch_size, num_steps])
-        self._mask = tf.placeholder(tf.float32, [batch_size, num_steps])
-        labels = tf.placeholder(tf.in32, [batch_size])
-        mask = tf.transpose(self._mask)
-        #mask = tf.expand_dims(tf.transpose(self._mask), -1)
+        self.input_data = tf.placeholder(tf.int32, [num_steps, batch_size], name="inputs")
+        self.mask = tf.placeholder(tf.float32, [num_steps, batch_size], name="mask")
+        self.labels = tf.placeholder(tf.int64, [batch_size], name="labels")
+        mask = tf.expand_dims(self.mask, -1)
+        labels = self.labels
+        #mask = tf.transpose(self._mask)
         #mask_expand = tf.tile(mask, tf.pack([1, 1, size]))
         #self._targets = tf.placeholder(tf.int32, [batch_size, num_steps])
 
         cell = tf.nn.rnn_cell.BasicLSTMCell(size, forget_bias=0.0)
-        self._initial_state = cell.zero_state(batch_size, tf.float32)
+        self.initial_state = cell.zero_state(batch_size, tf.float32)
 
         with tf.device("/cpu:0"):
             embedding = tf.get_variable("embedding", [vocab_size, size])
-            inputs = tf.nn.embedding_lookup(embedding, self._input_data)
+            inputs = tf.nn.embedding_lookup(embedding, self.input_data)
 
         outputs = []
-        state = self._initial_state
+        state = self.initial_state
         with tf.variable_scope("RNN"):
             for time_step in range(num_steps):
                 if time_step > 0:
                     tf.get_variable_scope().reuse_variables()
-                (cell_output, state) = cell(inputs[:, time_step, :], state)
-                outputs.append(cell_output)
-        
-        #################################
+                (cell_output, state) = cell(inputs[time_step, :, :], state)
+                outputs.append(tf.expand_dims(cell_output, 0))
         
         #cell_output = tf.convert_to_tensor(cell_output)*mask_expand
-        outputs = tf.convert_to_tensor(outputs)*mask
+        outputs = tf.concat(0, outputs)*mask
         mask_sum = tf.reduce_sum(mask, 0)
         proj = tf.reduce_sum(outputs, 0)/mask_sum #NOTE:did not tile mask_sum
-        #proj.shape = [batch_size, size]
-        #################################
+        #NOW proj.shape = [batch_size, size]
 
         softmax_w = tf.get_variable("softmax_w", [size, vocab_size])
         softmax_b = tf.get_variable("softmax_b", [vocab_size])
         logits = tf.matmul(proj, softmax_w) + softmax_b
         pred = tf.nn.softmax(logits)
         loss = tf.nn.sparse_softmax_cross_entropy_with_logits(logits, labels) 
-        self._cost = cost = tf.reduce_sum(loss) / batch_size
-        self._final_state = state
+        self.cost = cost = tf.reduce_sum(loss) / batch_size
+        self.final_state = state
+        correct_prediction = tf.equal(tf.argmax(pred,1), labels)
+        self.accuracy = tf.reduce_sum(tf.cast(correct_prediction, tf.float32))
 
         if not is_training:
             return
 
-        self._lr = tf.Variable(0.0, trainable=False)
+
+##########################################
+        self.lr = tf.Variable(0.0, trainable=False)
         tvars = tf.trainable_variables()
-        grads, _ = tf.clip_by_global_norm(tf.gradients(cost, tvars),
-            config.max_grad_norm)
+        grads, _ = tf.clip_by_global_norm(tf.gradients(cost, tvars),config.max_grad_norm)
         optimizer = tf.train.GradientDescentOptimizer(self.lr)
-        self._train_op = optimizer.apply_gradients(zip(grads, tvars))
-        
+        self.train_op = optimizer.apply_gradients(zip(grads, tvars))
+##########################################        
+
+    def assign_lr(self, session, lr_value):
+        session.run(tf.assign(self.lr, lr_value))
+
 
 class Config(object):
-    dim_proj=128  # word embeding dimension and LSTM number of hidden units.
     patience=10  # Number of epoch to wait before early stop if no progress
-    max_epochs=500  # The maximum number of epoch to run
     dispFreq=10  # Display to stdout the training progress every N updates
     decay_c=0.  # Weight decay for the classifier applied to the U weights.
     lrate=0.0001  # Learning rate for sgd (not used for adadelta and rmsprop)
@@ -97,133 +93,131 @@ class Config(object):
     validFreq=370  # Compute the validation error after this number of update.
     saveFreq=1110  # Save the parameters after every saveFreq updates
     maxlen=100  # Sequence longer then this get ignored
-    batch_size=16  # The batch size during training.
-    valid_batch_size=64  # The batch size used for validation/test set.
-    num_layers=1
+    batch_size=20  # The batch size during training.
     dataset='imdb'  # Parameter for extra option
     noise_std=0.
-    use_dropout=True  # if False slightly faster, but worst test error
-                       # This frequently need a bigger model.
+    use_dropout=True  # If False slightly faster, but worst test error. This frequently need a bigger model.
     reload_model=None  # Path to a saved model we want to start from.
-    test_size=-1  # If >0, we keep only this number of test example.
+
+    init_scale = 0.05
+    learning_rate = 1.0
+    max_grad_norm = 5
+    num_layers = 1
+    num_steps = 100
+    hidden_size = 128
+    max_epoch = 10
+    max_max_epoch = 40
+    keep_prob = 0.5
+    lr_decay = 0.95
+
+
+def get_minibatches_idx(n, batch_size, shuffle=False):
+    """
+    Used to shuffle the dataset at each iteration.
+    """
+
+    idx_list = numpy.arange(n, dtype="int32")
+
+    if shuffle:
+        numpy.random.shuffle(idx_list)
+
+    minibatches = []
+    minibatch_start = 0
+    for i in range(n // batch_size):
+        minibatches.append(idx_list[minibatch_start:
+                                    minibatch_start + batch_size])
+        minibatch_start += batch_size
+
+    if (minibatch_start != n):
+        # Make a minibatch out of what is left
+        minibatches.append(idx_list[minibatch_start:])
+
+    return minibatches
+
+
+def run_epoch(session, m, data, eval_op, verbose=False):
+    print("batch size", m.batch_size)
+    state = m.initial_state.eval()
+    n_samples = data[0].shape[1]
+    print("Testing %d samples:"%(n_samples))
+   
+    minibatches = get_minibatches_idx(n_samples, m.batch_size, shuffle=True)
+    n_batches = len(minibatches)-1
+    b_ind = 0
+    correct = 0.
+    total = 0
+
+    for inds in minibatches[:-1]:
+        print("\rbatch %d / %d"%(b_ind, n_batches), end="")
+        sys.stdout.flush()
+
+        x = data[0][:,inds]
+        mask = data[1][:,inds]
+        y = data[2][inds]
+
+        cost, state, count, _ = session.run([m.cost, m.final_state, m.accuracy, eval_op],
+                            {m.input_data: x, m.mask: mask, m.labels: y, m.initial_state: state})
+        correct += count
+        total += len(inds)
+        b_ind += 1
+
+    print("")
+    accuracy = correct/total
+    return accuracy
+
 
 def get_config():
     return Config()
 
-def init_params(options):
-    """
-    Global (not LSTM) parameter. For the embeding and the classifier.
-    """
-    params = OrderedDict()
-    # embedding
-    randn = numpy.random.rand(options['n_words'],
-                              options['dim_proj'])
-    params['Wemb'] = (0.01 * randn).astype('float32')
-    params = layers[options['encoder']][0](options,
-                                              params,
-                                              prefix=options['encoder'])
-    # classifier
-    params['U'] = 0.01 * numpy.random.randn(options['dim_proj'],
-                                            options['ydim']).astype('float32')
-    params['b'] = numpy.zeros((options['ydim'],)).astype('float32')
 
-    return params
-
-
-def init_tparams(params):
-    tparams = OrderedDict()
-    for kk, vv in params.items():
-        tparams[kk] = tf.Variable(vv)
-    return tparams
-
-
-def param_init_lstm(options, params, prefix='lstm'):
-    """
-    Init the LSTM parameter:
-
-    :see: init_params
-    """
-    W = numpy.concatenate([ortho_weight(options['dim_proj']),
-                           ortho_weight(options['dim_proj']),
-                           ortho_weight(options['dim_proj']),
-                           ortho_weight(options['dim_proj'])], axis=1)
-    params[_p(prefix, 'W')] = W
-    U = numpy.concatenate([ortho_weight(options['dim_proj']),
-                           ortho_weight(options['dim_proj']),
-                           ortho_weight(options['dim_proj']),
-                           ortho_weight(options['dim_proj'])], axis=1)
-    params[_p(prefix, 'U')] = U
-    b = numpy.zeros((4 * options['dim_proj'],))
-    params[_p(prefix, 'b')] = b.astype('float32')
-
-    return params
-
-layers = {'lstm': (param_init_lstm, lstm_layer)}
-
-def ortho_weight(ndim):
-    W = numpy.random.randn(ndim, ndim)
-    u, s, v = numpy.linalg.svd(W)
-    return u.astype('float32')
-
-
-def load_params(path, params):
-    pp = numpy.load(path)
-    for kk, vv in params.items():
-        if kk not in pp:
-            raise Warning('%s is not in the archive' % kk)
-        params[kk] = pp[kk]
-
-    return params
-
-def build_model(tparams, options):
+def main(unused_args):
     
-    # Used for dropout.
-    use_noise = tf.Variable(0.)
-
-    x = tf.placeholder
-
-    
-
-
-def main():
-
-    tf.Graph().as_default()
-
-    # Model options
-    print("model options", model_options)
-
-    load_data = imdb.load_data
-    prepare_data = imdb.prepare_data
+    maxlen = 100
+    n_words = 10000
 
     print('Loading data')
-    train, valid, test = load_data(n_words=n_words, valid_portion=0.05,
-                                   maxlen=maxlen)
-    if test_size > 0:
-        # The test set is sorted by size, but we want to keep random
-        # size example.  So we must select a random selection of the
-        # examples.
-        idx = numpy.arange(len(test[0]))
-        numpy.random.shuffle(idx)
-        idx = idx[:test_size]
-        test = ([test[0][n] for n in idx], [test[1][n] for n in idx])
+    train, valid, test = imdb.load_data(n_words=n_words, valid_portion=0.05, maxlen=maxlen)
 
-    print('Building model')
-    # This create the initial parameters as numpy ndarrays.
-    # Dict name (string) -> numpy ndarray
-    params = init_params(model_options)
+    train = imdb.prepare_data(train[0], train[1], maxlen=maxlen)
+    valid = imdb.prepare_data(valid[0], valid[1], maxlen=maxlen)
+    test = imdb.prepare_data(test[0], test[1], maxlen=maxlen)
 
-    if reload_model:
-        load_params('lstm_model.npz', params)
+    for data in [train, valid, test]:
+        print(data[0].shape, data[1].shape, data[2].shape)
 
-    tparams = init_tparams(params)
+    #x = [data[0][t] for t in indices]
+    #y = [data[1][t] for t in indices]
+    #x, mask, y = imdb.prepare_data(x, y, maxlen=m.num_steps)
 
+    config = get_config()
+    eval_config = get_config()
+    eval_config.batch_size = 1
+    eval_config.num_steps = 1
 
+    with tf.Graph().as_default(), tf.Session() as session:
+        initializer = tf.random_uniform_initializer(-config.init_scale,config.init_scale)
+        with tf.variable_scope("model", reuse=None, initializer=initializer):
+            m = SentimentModel(is_training=True, config=config)
+        with tf.variable_scope("model", reuse = True, initializer=initializer):
+            mvalid = SentimentModel(is_training=False, config=config)
+            mtest = SentimentModel(is_training=False, config=config)
 
+        tf.initialize_all_variables().run()
+        
+        for i in range(config.max_max_epoch):
+            lr_decay = config.lr_decay ** max(i - config.max_epoch, 0.0)
+            m.assign_lr(session, config.learning_rate * lr_decay)
 
+            print("Epoch: %d Learning rate: %.3f" % (i + 1, session.run(m.lr)))
+            start_time = time.time()
+            train_acc = run_epoch(session, m, train, m.train_op) 
+            print("Training Accuracy = %.4f, time = %.3f seconds\n"%(train_acc, time.time()-start_time))
+            valid_acc = run_epoch(session, mvalid, valid, tf.no_op())
+            print("Valid Accuracy = %.4f\n" % valid_acc)
 
-    session = tf.Session()
+        test_acc = run_epoch(session, mtest, test, tf.no_op())
+        print("Test Accuracy = %.4f\n" % test_acc)
 
-    session.close()
 
 if __name__ == '__main__':
     tf.app.run()

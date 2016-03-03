@@ -1,13 +1,15 @@
+'''
+Slight variation on imdb.py from Theano LSTM Sentiment Analysis tutorial.
+Changed for use in TensorFlow Sentiment Analysis implementation
+'''
 from __future__ import print_function
 from six.moves import xrange
 import six.moves.cPickle as pickle
 
 import gzip
 import os
-
 import numpy
-import theano
-#import tensorflow as tf
+
 #NOTE: line 47 changed from original: theano data type
 
 def prepare_data(seqs, labels, maxlen=None):
@@ -41,10 +43,11 @@ def prepare_data(seqs, labels, maxlen=None):
             return None, None, None
 
     n_samples = len(seqs)
-    maxlen = numpy.max(lengths)
+    #maxlen = numpy.max(lengths)
 
     x = numpy.zeros((maxlen, n_samples)).astype('int64')
     x_mask = numpy.zeros((maxlen, n_samples)).astype('float32')
+    labels = numpy.array(labels).astype('int32')
     for idx, s in enumerate(seqs):
         x[:lengths[idx], idx] = s
         x_mask[:lengths[idx], idx] = 1.
