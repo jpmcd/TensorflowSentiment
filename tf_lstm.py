@@ -50,10 +50,9 @@ class SentimentModel(object):
                 (cell_output, state) = cell(inputs[time_step, :, :], state)
                 outputs.append(tf.expand_dims(cell_output, 0))
         
-        #cell_output = tf.convert_to_tensor(cell_output)*mask_expand
         outputs = tf.concat(0, outputs)*mask
         mask_sum = tf.reduce_sum(mask, 0)
-        proj = tf.reduce_sum(outputs, 0)/mask_sum #NOTE:did not tile mask_sum
+        proj = tf.reduce_sum(outputs, 0)/mask_sum
         #NOW proj.shape = [batch_size, size]
 
         softmax_w = tf.get_variable("softmax_w", [size, vocab_size])
@@ -184,10 +183,6 @@ def main(unused_args):
 
     for data in [train, valid, test]:
         print(data[0].shape, data[1].shape, data[2].shape)
-
-    #x = [data[0][t] for t in indices]
-    #y = [data[1][t] for t in indices]
-    #x, mask, y = imdb.prepare_data(x, y, maxlen=m.num_steps)
 
     config = get_config()
     eval_config = get_config()
