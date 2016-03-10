@@ -1,8 +1,8 @@
 '''
 A TensorFlow implementation of Theano LSTM sentiment analyzer tutorial,
-this model is a variation on the structure of TensorFlow's ptb_word_lm.py
-language model tutorial to accomplish the sentiment analysis task from
-the IMDB dataset.
+this model is a variation on TensorFlow's ptb_word_lm.py seq2seq model
+tutorial to accomplish the sentiment analysis task from the IMDB dataset.
+
 '''
 
 from __future__ import print_function
@@ -34,12 +34,20 @@ class SentimentModel(object):
         #mask_expand = tf.tile(mask, tf.pack([1, 1, size]))
         #self._targets = tf.placeholder(tf.int32, [batch_size, num_steps])
 
+        #add LSTM cell and dropout nodes
         cell = tf.nn.rnn_cell.BasicLSTMCell(size, forget_bias=0.0)
+        if is_training and config.keep_prob < 1:
+            cell = tf.nn.rnn_cell.DropoutWrapper(cell, output_keep_prob=config.keep_prob)
+
         self.initial_state = cell.zero_state(batch_size, tf.float32)
 
         with tf.device("/cpu:0"):
             embedding = tf.get_variable("embedding", [vocab_size, size])
             inputs = tf.nn.embedding_lookup(embedding, self.input_data)
+
+        #add dropout to input units
+        if is_training and config.keep_prob < 1:
+            inputs = tf.nn.dropout(inputs, config.keep_prob)
 
         outputs = []
         state = self.initial_state
@@ -53,7 +61,7 @@ class SentimentModel(object):
         outputs = tf.concat(0, outputs)*mask
         mask_sum = tf.reduce_sum(mask, 0)
         proj = tf.reduce_sum(outputs, 0)/mask_sum
-        #NOW proj.shape = [batch_size, size]
+        #NOW proj has shape [batch_size, size]
 
         softmax_w = tf.get_variable("softmax_w", [size, vocab_size])
         softmax_b = tf.get_variable("softmax_b", [vocab_size])
