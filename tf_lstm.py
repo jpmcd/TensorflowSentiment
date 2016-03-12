@@ -77,11 +77,11 @@ class SentimentModel(object):
             return
 
 
-##########################################
         self.lr = tf.Variable(0.0, trainable=False)
         tvars = tf.trainable_variables()
         grads, _ = tf.clip_by_global_norm(tf.gradients(cost, tvars),config.max_grad_norm)
-        optimizer = tf.train.GradientDescentOptimizer(self.lr)
+        #optimizer = tf.train.GradientDescentOptimizer(self.lr)
+        optimizer = tf.train.AdagradOptimizer(self.lr)
         self.train_op = optimizer.apply_gradients(zip(grads, tvars))
 ##########################################        
 
@@ -112,8 +112,8 @@ class Config(object):
     num_layers = 1
     num_steps = 100
     hidden_size = 128
-    max_epoch = 10
-    max_max_epoch = 40
+    max_epoch = 6
+    max_max_epoch = 75
     keep_prob = 0.5
     lr_decay = 0.95
 
