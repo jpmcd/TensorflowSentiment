@@ -83,7 +83,6 @@ class SentimentModel(object):
         #optimizer = tf.train.GradientDescentOptimizer(self.lr)
         optimizer = tf.train.AdagradOptimizer(self.lr)
         self.train_op = optimizer.apply_gradients(zip(grads, tvars))
-##########################################        
 
     def assign_lr(self, session, lr_value):
         session.run(tf.assign(self.lr, lr_value))
