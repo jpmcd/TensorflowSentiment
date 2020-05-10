@@ -10,7 +10,6 @@ import gzip
 import os
 import numpy
 
-#NOTE: line 47 changed from original: theano data type
 
 def prepare_data(seqs, labels, maxlen=None):
     """Create the matrices from the datasets.
@@ -43,7 +42,7 @@ def prepare_data(seqs, labels, maxlen=None):
             return None, None, None
 
     n_samples = len(seqs)
-    #maxlen = numpy.max(lengths)
+    #maxlen = numpy.max(lengths) #Causes error, placeholder input size must be fixed
 
     x = numpy.zeros((maxlen, n_samples)).astype('int64')
     x_mask = numpy.zeros((maxlen, n_samples)).astype('float32')

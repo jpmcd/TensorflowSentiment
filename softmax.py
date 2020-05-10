@@ -29,7 +29,7 @@ batch_size = None
 x = tf.placeholder(tf.float32, [batch_size,784])
 y_ = tf.placeholder(tf.float32, [batch_size, 10])
 
-if False:
+if True:
     W = tf.Variable(tf.zeros([784,10]))
     b = tf.Variable(tf.zeros([10]))
     y = tf.nn.softmax(tf.matmul(x,W) + b)
